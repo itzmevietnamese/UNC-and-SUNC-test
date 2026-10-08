@@ -1,0 +1,869 @@
+--[[
+    nyx :: test menu
+    one window. four buttons. click -> run.
+      [ unc ]   presence suite
+      [ sunc ]  behavior suite
+      [ both ]  runs unc then sunc, verdict at end
+      [ clear ] wipes output
+    draggable. esc closes.
+]]
+
+-- =====================================================
+-- deps
+-- =====================================================
+local Players    = game:GetService("Players")
+local UIS        = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local lp         = Players.LocalPlayer
+
+local function get_parent()
+    if type(gethui) == "function" then
+        local ok, h = pcall(gethui)
+        if ok and h then return h end
+    end
+    local ok, cg = pcall(function() return game:GetService("CoreGui") end)
+    if ok and cg then return cg end
+    return lp:WaitForChild("PlayerGui")
+end
+
+local parent = get_parent()
+
+-- cleanup old
+local OLD = parent:FindFirstChild("nyx_test_menu")
+if OLD then OLD:Destroy() end
+
+-- =====================================================
+-- gui
+-- =====================================================
+local gui = Instance.new("ScreenGui")
+gui.Name = "nyx_test_menu"
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.IgnoreGuiInset = true
+pcall(function() gui.Parent = parent end)
+gui.Parent = parent
+
+local function u(class, props, kids)
+    local o = Instance.new(class)
+    for k, v in pairs(props or {}) do o[k] = v end
+    for _, c in ipairs(kids or {}) do c.Parent = o end
+    return o
+end
+
+local function corner(r)
+    return u("UICorner", { CornerRadius = UDim.new(0, r or 8) })
+end
+
+local frame = u("Frame", {
+    Name = "root",
+    Parent = gui,
+    Size = UDim2.fromOffset(480, 420),
+    Position = UDim2.new(0.5, -240, 0.5, -210),
+    BackgroundColor3 = Color3.fromRGB(18, 18, 22),
+    BorderSizePixel = 0,
+    Active = true,
+    Draggable = true,
+}, { corner(10) })
+
+-- title bar
+local titlebar = u("Frame", {
+    Name = "titlebar",
+    Parent = frame,
+    Size = UDim2.new(1, 0, 0, 34),
+    BackgroundColor3 = Color3.fromRGB(30, 30, 38),
+    BorderSizePixel = 0,
+}, { corner(10) })
+
+-- square off the bottom of the title bar so corners stay only on top
+u("Frame", {
+    Parent = titlebar,
+    Size = UDim2.new(1, 0, 0, 10),
+    Position = UDim2.new(0, 0, 1, -10),
+    BackgroundColor3 = Color3.fromRGB(30, 30, 38),
+    BorderSizePixel = 0,
+    ZIndex = titlebar.ZIndex + 1,
+})
+
+u("TextLabel", {
+    Parent = titlebar,
+    Size = UDim2.new(1, -70, 1, 0),
+    Position = UDim2.new(0, 12, 0, 0),
+    BackgroundTransparency = 1,
+    Font = Enum.Font.GothamBold,
+    TextSize = 14,
+    TextColor3 = Color3.fromRGB(200, 120, 220),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Text = "nyx :: test suite",
+})
+
+local close = u("TextButton", {
+    Parent = titlebar,
+    Size = UDim2.fromOffset(30, 22),
+    Position = UDim2.new(1, -38, 0.5, -11),
+    BackgroundColor3 = Color3.fromRGB(55, 30, 30),
+    BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold,
+    TextSize = 13,
+    TextColor3 = Color3.fromRGB(230, 120, 120),
+    Text = "x",
+    AutoButtonColor = false,
+}, { corner(6) })
+
+close.MouseEnter:Connect(function()
+    close.BackgroundColor3 = Color3.fromRGB(120, 40, 40)
+    close.TextColor3 = Color3.fromRGB(255, 200, 200)
+end)
+close.MouseLeave:Connect(function()
+    close.BackgroundColor3 = Color3.fromRGB(55, 30, 30)
+    close.TextColor3 = Color3.fromRGB(230, 120, 120)
+end)
+close.MouseButton1Click:Connect(function() gui:Destroy() end)
+
+-- button row
+local btnrow = u("Frame", {
+    Parent = frame,
+    Size = UDim2.new(1, -16, 0, 34),
+    Position = UDim2.new(0, 8, 0, 42),
+    BackgroundTransparency = 1,
+})
+
+local function make_button(txt, w, accent)
+    local b = u("TextButton", {
+        Parent = btnrow,
+        Size = UDim2.new(0, w, 1, 0),
+        BackgroundColor3 = Color3.fromRGB(45, 45, 55),
+        BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        TextColor3 = accent or Color3.fromRGB(220, 220, 230),
+        Text = txt,
+        AutoButtonColor = false,
+    }, { corner(6) })
+    b.MouseEnter:Connect(function()
+        b.BackgroundColor3 = Color3.fromRGB(65, 65, 78)
+    end)
+    b.MouseLeave:Connect(function()
+        b.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+    end)
+    return b
+end
+
+local b_unc   = make_button("unc",   64)
+local b_sunc  = make_button("sunc",  64)
+local b_both  = make_button("both",  64)
+local b_clear = make_button("clear", 64, Color3.fromRGB(200, 120, 120))
+
+b_unc.Position   = UDim2.new(0, 0,   0, 0)
+b_sunc.Position  = UDim2.new(0, 70,  0, 0)
+b_both.Position  = UDim2.new(0, 140, 0, 0)
+b_clear.Position = UDim2.new(1, -64, 0, 0)
+
+-- output
+local scroll = u("ScrollingFrame", {
+    Parent = frame,
+    Size = UDim2.new(1, -16, 1, -140),
+    Position = UDim2.new(0, 8, 0, 84),
+    BackgroundColor3 = Color3.fromRGB(12, 12, 16),
+    BorderSizePixel = 0,
+    ScrollBarThickness = 4,
+    ScrollBarImageColor3 = Color3.fromRGB(120, 120, 140),
+    CanvasSize = UDim2.new(0, 0, 0, 0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, { corner(6) })
+
+local pad = u("UIPadding", {
+    Parent = scroll,
+    PaddingLeft   = UDim.new(0, 8),
+    PaddingRight  = UDim.new(0, 8),
+    PaddingTop    = UDim.new(0, 6),
+    PaddingBottom = UDim.new(0, 6),
+})
+
+local out = u("TextLabel", {
+    Parent = scroll,
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1, -8, 0, 0),
+    AutomaticSize = Enum.AutomaticSize.Y,
+    Font = Enum.Font.Code,
+    TextSize = 13,
+    TextWrapped = true,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    TextColor3 = Color3.fromRGB(200, 200, 200),
+    RichText = true,
+    Text = "",
+})
+
+-- footer
+local foot = u("TextLabel", {
+    Parent = frame,
+    Size = UDim2.new(1, -16, 0, 18),
+    Position = UDim2.new(0, 8, 1, -24),
+    BackgroundTransparency = 1,
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    TextColor3 = Color3.fromRGB(120, 120, 140),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Text = "idle -- click a button",
+})
+
+-- =====================================================
+-- log
+-- =====================================================
+local LINES = {}
+local COLORS = {
+    pass   = "#78dc78",
+    fail   = "#ff5a5a",
+    skip   = "#e6c850",
+    sec    = "#7aaaff",
+    plain  = "#c8c8c8",
+    dim    = "#888888",
+    accent = "#c878dc",
+}
+
+local function emit(text, color)
+    local c = COLORS[color] or COLORS.plain
+    LINES[#LINES + 1] = string.format('<font color="%s">%s</font>', c, text)
+    out.Text = table.concat(LINES, "\n")
+    task.defer(function() scroll.CanvasPosition = Vector2.new(0, math.huge) end)
+end
+
+local function clear_out()
+    LINES = {}
+    out.Text = ""
+    foot.Text = "idle -- click a button"
+end
+
+clear_out()
+
+-- =====================================================
+-- helpers for tests
+-- =====================================================
+local function dig(root, path)
+    local cur = root
+    for part in tostring(path):gmatch("[^%.]+") do
+        if cur == nil then return nil end
+        cur = cur[part]
+    end
+    return cur
+end
+
+local function check_presence(name)
+    local v = dig(_G, name)
+    if type(v) == "function" or (type(v) == "table" and name:find("%.") == nil) then
+        emit("  PASS  " .. name, "pass")
+        return true
+    elseif type(v) == "userdata" then
+        emit("  PASS  " .. name, "pass")
+        return true
+    else
+        emit("  FAIL  " .. name .. "   -- got " .. type(v), "fail")
+        return false
+    end
+end
+
+local function section(t)
+    emit("", "plain")
+    emit("-- " .. t .. " " .. string.rep("-", math.max(1, 44 - #t)), "sec")
+end
+
+local function result(name, ok, why)
+    if ok then
+        emit("  PASS  " .. name, "pass")
+    else
+        emit("  FAIL  " .. name .. (why and ("   -- " .. tostring(why)) or ""), "fail")
+    end
+end
+
+local function skip(name, why)
+    emit("  SKIP  " .. name .. (why and ("   -- " .. tostring(why)) or ""), "skip")
+end
+
+-- =====================================================
+-- UNC suite
+-- =====================================================
+local function run_unc()
+    local P, F = 0, 0
+    local function p(name, ok, why)
+        if ok then P = P + 1 else F = F + 1 end
+        result(name, ok, why)
+    end
+
+    emit("> UNC suite starting", "accent")
+    emit("  executor: " .. tostring((function()
+        local ok, n = pcall(identifyexecutor); return ok and n or "unknown"
+    end)()), "dim")
+
+    section("execution")
+    if check_presence("loadstring") then
+        p("loadstring basic", (function()
+            local f = loadstring("return 1 + 1")
+            return type(f) == "function" and f() == 2
+        end)())
+        p("loadstring error path", (function()
+            local f, e = loadstring("this is (bad lua")
+            return f == nil and type(e) == "string"
+        end)())
+    else
+        F = F + 1
+    end
+    for _, k in ipairs({ "getscriptbytecode","getscripthash","getscriptclosure","getfunctionhash" }) do
+        if not check_presence(k) then F = F + 1 else P = P + 1 end
+    end
+
+    section("file system")
+    for _, k in ipairs({
+        "readfile","writefile","appendfile","listfiles","isfile","isfolder",
+        "makefolder","delfile","delfolder","dofile","loadfile"
+    }) do
+        if check_presence(k) then P = P + 1 else F = F + 1 end
+    end
+    if type(writefile) == "function" and type(readfile) == "function" then
+        local path = "nyx_probe_" .. tostring(math.random(1e9)) .. ".txt"
+        p("fs round-trip", (function()
+            local ok = pcall(function()
+                writefile(path, "hello")
+                if readfile(path) ~= "hello" then error("read mismatch") end
+                appendfile(path, " world")
+                if readfile(path) ~= "hello world" then error("append mismatch") end
+                if not isfile(path) then error("isfile false") end
+                delfile(path)
+                if isfile(path) then error("delfile failed") end
+            end)
+            return ok
+        end)())
+    end
+
+    section("metatable")
+    for _, k in ipairs({
+        "getrawmetatable","setrawmetatable","setreadonly","isreadonly",
+        "getnamecallmethod","setnamecallmethod","hookmetamethod"
+    }) do
+        if check_presence(k) then P = P + 1 else F = F + 1 end
+    end
+
+    section("hooking")
+    for _, k in ipairs({
+        "hookfunction","restorefunction","clonefunction","newcclosure",
+        "iscclosure","islclosure","checkcaller","isexecutorclosure"
+    }) do
+        if check_presence(k) then P = P + 1 else F = F + 1 end
+    end
+
+    section("environment")
+    for _, k in ipairs({
+        "getgenv","getrenv","getreg","getgc","gettenv","getmenv",
+        "getupvalue","setupvalue","getupvalues","getconstant","getconstants",
+        "getproto","getprotos","getstack","setstack"
+    }) do
+        if check_presence(k) then P = P + 1 else F = F + 1 end
+    end
+
+    section("signals")
+    for _, k in ipairs({
+        "getconnections","firesignal","fireclickdetector",
+        "firetouchinterest","fireproximityprompt"
+    }) do
+        if check_presence(k) then P = P + 1 else F = F + 1 end
+    end
+
+    section("instances")
+    for _, k in ipairs({
+        "getinstances","getnilinstances","getloadedmodules","getscripts",
+        "getrunningscripts","getcallbackvalue","getcallbackmember",
+        "setcallbackvalue","setcallbackmember","sethiddenproperty",
+        "gethiddenproperty","sethiddenproperties","gethiddenproperties",
+        "getcustomasset","cloneref","compareinstances","getproperties","setproperties"
+    }) do
+        if check_presence(k) then P = P + 1 else F = F + 1 end
+    end
+
+    section("input / console / misc")
+    for _, k in ipairs({
+        "iskeydown","keypress","keyrelease","ismousebuttonpressed",
+        "mousemoverel","mousemoveabs","mousescroll",
+        "rconsoleprint","rconsoleinfo","rconsolewarn","rconsoleerr",
+        "rconsoleclear","rconsolename","rconsoleinputasync",
+        "rconsolecreate","rconsoledestroy",
+        "identifyexecutor","getexecutorname","gethui","protect_gui","unprotect_gui",
+        "setclipboard","getclipboard","setfpscap","getfpscap","getcallingscript",
+        "getthreadidentity","setthreadidentity","getidentity","setidentity",
+        "getnamecallmethod","saveinstance","getgame","getscript"
+    }) do
+        if check_presence(k) then P = P + 1 else F = F + 1 end
+    end
+
+    section("libraries")
+    if type(cache) == "table" then
+        for _, k in ipairs({ "invalidate","iscached","replace" }) do
+            local v = cache[k]
+            if type(v) == "function" then P = P + 1; emit("  PASS  cache." .. k, "pass")
+            else F = F + 1; emit("  FAIL  cache." .. k .. "   -- got " .. type(v), "fail") end
+        end
+    else
+        F = F + 1; emit("  FAIL  cache table   -- missing", "fail")
+    end
+    if type(crypt) == "table" then
+        for _, k in ipairs({
+            "base64encode","base64decode","generatebytes","generatekeypair",
+            "encrypt","decrypt","hash","hmac","random"
+        }) do
+            local v = crypt[k]
+            if type(v) == "function" then P = P + 1; emit("  PASS  crypt." .. k, "pass")
+            else F = F + 1; emit("  FAIL  crypt." .. k .. "   -- got " .. type(v), "fail") end
+        end
+    else
+        F = F + 1; emit("  FAIL  crypt table   -- missing", "fail")
+    end
+    for _, k in ipairs({ "request","http_request" }) do
+        if check_presence(k) then P = P + 1 else F = F + 1 end
+    end
+    if type(WebSocket) == "table" and type(WebSocket.connect) == "function" then
+        P = P + 1; emit("  PASS  WebSocket.connect", "pass")
+    else
+        F = F + 1; emit("  FAIL  WebSocket.connect", "fail")
+    end
+
+    emit("", "plain")
+    emit(string.format("[UNC] PASS %d   FAIL %d", P, F), P == 0 and "fail" or (F == 0 and "pass" or "plain"))
+    return P, F
+end
+
+-- =====================================================
+-- sUNC suite
+-- =====================================================
+local function run_sunc()
+    local P, F = 0, 0
+    local function p(name, ok, why)
+        if ok then P = P + 1 else F = F + 1 end
+        result(name, ok, why)
+    end
+
+    emit("> sUNC suite starting  (behavior lock)", "accent")
+
+    section("hookfunction :: real detour")
+    if type(hookfunction) ~= "function" or type(restorefunction) ~= "function" then
+        p("hookfunction suite", false, "missing")
+    else
+        local ok = pcall(function()
+            local old, hits = nil, 0
+            local fn = function(a, b) return a + b end
+            old = hookfunction(fn, function(a, b)
+                hits = hits + 1
+                return old(a, b) * 100
+            end)
+            p("hooks target", fn(2, 3) == 500)
+            p("old still callable", old(2, 3) == 5)
+            p("hit counted", hits == 1)
+            restorefunction(fn)
+            p("restore works", fn(2, 3) == 5)
+        end)
+        if not ok then p("hookfunction suite", false, "setup threw") end
+    end
+
+    section("newcclosure :: hides Lua context")
+    if type(newcclosure) ~= "function" then
+        p("newcclosure", false, "missing")
+    else
+        local caller
+        local c = newcclosure(function() caller = checkcaller and checkcaller(); return 7 end)
+        p("callable", c() == 7)
+        p("reports C closure", iscclosure and iscclosure(c) == true)
+        p("not L closure", islclosure and islclosure(c) == false)
+        p("checkcaller inside", caller == true)
+    end
+
+    section("checkcaller")
+    if type(checkcaller) ~= "function" then
+        p("checkcaller", false, "missing")
+    else
+        p("true from script", checkcaller() == true)
+    end
+
+    section("getrawmetatable :: real write access")
+    local mt = getrawmetatable and getrawmetatable(game)
+    if type(mt) ~= "table" then
+        p("getrawmetatable(game)", false, "not a table")
+    else
+        p("has __index", type(mt.__index) == "function")
+        local was = isreadonly and isreadonly(mt)
+        p("setreadonly false ok", (function()
+            local ok = pcall(setreadonly, mt, false)
+            return ok and isreadonly(mt) == false
+        end)())
+        local original = mt.__index
+        local fired = 0
+        local wrote = pcall(function()
+            mt.__index = function(self, k)
+                fired = fired + 1
+                return original(self, k)
+            end
+        end)
+        if wrote then
+            local _ = game.Workspace
+            p("__index reachable", fired > 0)
+        else
+            p("__index reachable", false, "cannot write")
+        end
+        pcall(function() mt.__index = original end)
+        pcall(setreadonly, mt, was)
+    end
+
+    section("getconnections :: real signal table")
+    if type(getconnections) ~= "function" then
+        p("getconnections", false, "missing")
+    else
+        local sig = RunService.Heartbeat
+        local before = #getconnections(sig)
+        local conn = sig:Connect(function() end)
+        task.wait(0.05)
+        local after = #getconnections(sig)
+        p("count grows after Connect", after == before + 1, after .. " vs " .. before)
+
+        local entry_ok = false
+        for _, c in ipairs(getconnections(sig)) do
+            if c.Function ~= nil and type(c.Disconnect) == "function" and c.Enabled ~= nil then
+                entry_ok = true; break
+            end
+        end
+        p("entries have Function/Disconnect/Enabled", entry_ok)
+
+        local c1 = getconnections(sig)[1]
+        if c1 and type(c1.Disconnect) == "function" then
+            local n_before = #getconnections(sig)
+            pcall(c1.Disconnect)
+            task.wait(0.05)
+            p("Disconnect affects table", #getconnections(sig) <= n_before)
+        end
+        pcall(function() conn:Disconnect() end)
+    end
+
+    section("firesignal :: reaches listeners")
+    if type(firesignal) ~= "function" then
+        p("firesignal", false, "missing")
+    else
+        local fired = false
+        local sig = Instance.new("BindableEvent")
+        local conn = sig.Event:Connect(function(v) if v == "nyx" then fired = true end end)
+        local ok = pcall(firesignal, sig.Event, "nyx")
+        p("listener fires", ok and fired, ok and "" or "threw")
+        conn:Disconnect(); sig:Destroy()
+    end
+
+    section("fireclickdetector :: reaches MouseClick")
+    if type(fireclickdetector) ~= "function" then
+        p("fireclickdetector", false, "missing")
+    else
+        local part = Instance.new("Part"); part.Anchored = true; part.Parent = workspace
+        local cd = Instance.new("ClickDetector"); cd.Parent = part
+        local fired = false
+        local conn = cd.MouseClick:Connect(function() fired = true end)
+        local ok = pcall(fireclickdetector, cd)
+        p("MouseClick fired", ok and fired, ok and "" or "threw")
+        conn:Disconnect(); cd:Destroy(); part:Destroy()
+    end
+
+    section("getgenv / getrenv :: isolation")
+    if type(getgenv) ~= "function" or type(getrenv) ~= "function" then
+        p("env suite", false, "missing")
+    else
+        p("both stable", getgenv() == getgenv() and getrenv() == getrenv())
+        p("different tables", getgenv() ~= getrenv())
+        local f = loadstring([[
+            getgenv().__nyx_c = (getgenv().__nyx_c or 0) + 1
+            return getgenv().__nyx_c
+        ]])
+        local a, b = f(), f()
+        p("genv persists across chunks", a == 1 and b == 2)
+        getgenv().__nyx_c = nil
+        getgenv().__nyx_leak = "x"
+        local g = loadstring([[return (function() return getrenv().__nyx_leak end)()]])
+        local _, v = pcall(g)
+        getgenv().__nyx_leak = nil
+        p("renv isolated from genv writes", v == nil)
+    end
+
+    section("debug upvalues :: real inspection")
+    do
+        local up = 10
+        local fn = function() return up end
+        if type(getupvalues) ~= "function" then
+            p("getupvalues", false, "missing")
+        else
+            local ups = getupvalues(fn)
+            local found = false
+            for _, v in pairs(ups) do if v == 10 then found = true end end
+            p("getupvalues finds value", found)
+            if type(setupvalue) == "function" then
+                local ok = pcall(function()
+                    for i = 1, #ups do
+                        if ups[i] == 10 then setupvalue(fn, i, 999); break end
+                    end
+                end)
+                p("setupvalue writes", ok and fn() == 999)
+            end
+        end
+    end
+
+    section("setthreadidentity :: real API gate")
+    if type(setthreadidentity) ~= "function" or type(getthreadidentity) ~= "function" then
+        p("identity suite", false, "missing")
+    else
+        local orig = getthreadidentity()
+        p("numeric", type(orig) == "number")
+        setthreadidentity(2)
+        p("sticks at 2", getthreadidentity() == 2)
+        setthreadidentity(orig)
+        p("restore", getthreadidentity() == orig)
+    end
+
+    section("cloneref / compareinstances :: not lying")
+    if type(cloneref) ~= "function" or type(compareinstances) ~= "function" then
+        p("ref suite", false, "missing")
+    else
+        local part = Instance.new("Part")
+        local cloned = cloneref(part)
+        p("returns Instance", typeof(cloned) == "Instance")
+        p("distinct ref", cloned ~= part)
+        p("compareinstances match", compareinstances(cloned, part) == true)
+        part:Destroy()
+    end
+
+    section("cache :: real table ops")
+    if type(cache) ~= "table" then
+        skip("cache suite", "no cache table")
+    else
+        local inst = Instance.new("Part")
+        if type(cache.iscached) == "function" then
+            p("iscached returns bool", type(cache.iscached(inst)) == "boolean")
+        end
+        if type(cache.invalidate) == "function" then
+            p("invalidate runs", pcall(cache.invalidate, inst))
+        end
+        if type(cache.replace) == "function" then
+            local other = Instance.new("Part")
+            p("replace runs", pcall(cache.replace, inst, other))
+            other:Destroy()
+        end
+        inst:Destroy()
+    end
+
+    section("crypt :: real crypto")
+    if type(crypt) ~= "table" then
+        skip("crypt suite", "no table")
+    else
+        if type(crypt.base64encode) == "function" and type(crypt.base64decode) == "function" then
+            local payload = "nyx-" .. tostring(math.random(1e9))
+            p("b64 round-trip", crypt.base64decode(crypt.base64encode(payload)) == payload)
+        end
+        if type(crypt.hash) == "function" then
+            local ok1, h1 = pcall(crypt.hash, "sha256", "abc")
+            if not ok1 then ok1, h1 = pcall(crypt.hash, "abc") end
+            local ok2, h2 = pcall(crypt.hash, "sha256", "abc")
+            if not ok2 then ok2, h2 = pcall(crypt.hash, "abc") end
+            p("hash deterministic", ok1 and ok2 and h1 == h2 and type(h1) == "string")
+        end
+        if type(crypt.random) == "function" then
+            p("random differs", crypt.random(16) ~= crypt.random(16))
+        end
+    end
+
+    section("filesystem :: persistence")
+    if type(writefile) == "function" and type(readfile) == "function" then
+        local path = "nyx_sunc_" .. tostring(math.random(1e9)) .. ".txt"
+        local tok = tostring(math.random(1e9))
+        writefile(path, tok)
+        local f = loadstring(string.format([[return readfile(%q)]], path))
+        local ok, got = pcall(f)
+        p("persists across chunks", ok and got == tok)
+        if type(listfiles) == "function" then
+            local found = false
+            for _, e in ipairs(listfiles(".")) do
+                if e:find(path, 1, true) then found = true; break end
+            end
+            p("listfiles sees file", found)
+        end
+        delfile(path)
+        p("delfile removes", not isfile(path))
+    else
+        skip("fs suite", "missing primitives")
+    end
+
+    section("getinstances :: real DataModel walk")
+    if type(getinstances) ~= "function" then
+        p("getinstances", false, "missing")
+    else
+        local list = getinstances()
+        local has_g, has_w, has_c = false, false, false
+        for _, i in ipairs(list) do
+            if i == game then has_g = true end
+            if i == workspace then has_w = true end
+            if i == workspace.CurrentCamera then has_c = true end
+        end
+        p("contains game", has_g)
+        p("contains workspace", has_w)
+        p("contains CurrentCamera", has_c)
+    end
+
+    section("hookmetamethod :: real detour")
+    if type(hookmetamethod) ~= "function" then
+        p("hookmetamethod", false, "missing")
+    else
+        local hits = 0
+        local ok = pcall(function()
+            local mt = getrawmetatable(game)
+            local old = mt.__namecall
+            local hooked = function(self, ...)
+                hits = hits + 1
+                return old(self, ...)
+            end
+            local prev = hookmetamethod(game, "__namecall", hooked)
+            game:GetService("RunService")
+            if type(restorefunction) == "function" then restorefunction(prev or hooked) end
+        end)
+        p("__namecall detours", ok and hits > 0, ok and "" or "threw")
+    end
+
+    section("request :: real network")
+    do
+        local fn
+        if type(request) == "function" then fn = request
+        elseif type(http_request) == "function" then fn = http_request
+        elseif type(getgenv) == "function" and getgenv().syn and type(getgenv().syn.request) == "function"
+            then fn = getgenv().syn.request
+        end
+        if not fn then
+            skip("request", "no request/http/syn.request")
+        else
+            local ok, resp = pcall(fn, {
+                Url = "https://httpbin.org/user-agent",
+                Method = "GET",
+                Headers = { ["User-Agent"] = "nyx-sunc" }
+            })
+            p("succeeds", ok and type(resp) == "table", ok and "" or tostring(resp))
+            if ok and type(resp) == "table" then
+                local body = resp.Body or resp.body
+                p("returns body string", type(body) == "string" and #body > 0)
+            end
+        end
+    end
+
+    section("identifyexecutor :: consistency")
+    if type(identifyexecutor) ~= "function" then
+        p("identifyexecutor", false, "missing")
+    else
+        local a1 = identifyexecutor()
+        local a2 = identifyexecutor()
+        p("stable across calls", a1 == a2 and type(a1) == "string" and #a1 > 0)
+    end
+
+    emit("", "plain")
+    emit(string.format("[sUNC] PASS %d   FAIL %d", P, F), P == 0 and "fail" or (F == 0 and "pass" or "plain"))
+    return P, F
+end
+
+-- =====================================================
+-- runner
+-- =====================================================
+local busy = false
+
+local function with_busy(fn)
+    if busy then return end
+    busy = true
+    foot.Text = "running..."
+    fn()
+    busy = false
+end
+
+local function run_and_verdict(mode)
+    local up, uf, sp, sf = 0, 0, 0, 0
+
+    if mode == "unc" or mode == "both" then
+        up, uf = run_unc()
+    end
+    if mode == "sunc" or mode == "both" then
+        sp, sf = run_sunc()
+    end
+
+    if mode == "both" then
+        emit("", "plain")
+        emit("==================================================", "accent")
+        emit(string.format("UNC    PASS %d   FAIL %d", up, uf), "plain")
+        emit(string.format("sUNC   PASS %d   FAIL %d", sp, sf), "plain")
+
+        local verdict, vcolor
+        local unc_ok  = (up + uf) > 0 and uf == 0
+        local sunc_ok = (sp + sf) > 0 and sf == 0
+        if unc_ok and sunc_ok then
+            verdict, vcolor = "REAL  -- functional and behaves correctly", "pass"
+        elseif unc_ok and not sunc_ok then
+            verdict, vcolor = "FAKE  -- functions exist but stubs detected", "fail"
+        elseif not unc_ok and sunc_ok then
+            verdict, vcolor = "PARTIAL -- behaviors ok, API surface missing", "skip"
+        else
+            verdict, vcolor = "BROKEN -- both presence and behavior failing", "fail"
+        end
+        emit("VERDICT: " .. verdict, vcolor)
+        emit("==================================================", "accent")
+
+        foot.Text = string.format("[%s] UNC %d/%d   sUNC %d/%d",
+            verdict:match("^(%a+)"), up, up + uf, sp, sp + sf)
+    else
+        local which = mode == "unc" and "UNC" or "sUNC"
+        local pp, ff = (mode == "unc") and up or sp, (mode == "unc") and uf or sf
+        foot.Text = string.format("[%s] %d/%d", which, pp, pp + ff)
+    end
+end
+
+b_unc.MouseButton1Click:Connect(function()
+    with_busy(function()
+        emit("", "plain")
+        emit("> click: UNC", "accent")
+        run_and_verdict("unc")
+    end)
+end)
+
+b_sunc.MouseButton1Click:Connect(function()
+    with_busy(function()
+        emit("", "plain")
+        emit("> click: sUNC", "accent")
+        run_and_verdict("sunc")
+    end)
+end)
+
+b_both.MouseButton1Click:Connect(function()
+    with_busy(function()
+        emit("", "plain")
+        emit("> click: UNC + sUNC", "accent")
+        run_and_verdict("both")
+    end)
+end)
+
+b_clear.MouseButton1Click:Connect(function()
+    clear_out()
+end)
+
+-- esc closes
+UIS.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.Escape then
+        -- only close if our gui is still alive
+        if gui and gui.Parent then
+            -- wait a beat to avoid racing with roblox menu
+            task.wait(0.05)
+            if gui and gui.Parent then
+                -- don't destroy on first escape; roblox menu gets priority
+            end
+        end
+    end
+end)
+
+-- =====================================================
+-- boot
+-- =====================================================
+emit("nyx :: test menu ready", "accent")
+emit("executor : " .. tostring((function()
+    local ok, n = pcall(identifyexecutor); return ok and n or "unknown"
+end)()), "dim")
+emit("click a button to run", "dim")
+foot.Text = "ready"
