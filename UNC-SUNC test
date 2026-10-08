@@ -1,572 +1,377 @@
 --[[
-    nyx :: unc+sunc manifest-driven test suite
-    - TESTS = list of { name, fn, expected } -- evidence-based, not just presence
-    - runner executes, captures witness
-    - reporter emits table + text + optional JSON
-    - no hard-coded URL, source = this file
+    nyx :: UNCTestLoadstring wrapper
+    - fetch canonical UNCTestLoadstring từ Kaspiersky repo
+    - hook print/warn/rconsoleprint -> capture output
+    - hiện trong GUI, draggable, có nút rerun + clear
 ]]
 
--- =====================================================
--- core
--- =====================================================
-local OUT = { lines = {}, pass = 0, fail = 0, skip = 0 }
-local function emit(s, tag) OUT.lines[#OUT.lines+1] = { text = tostring(s), tag = tag } end
-local function head(t) emit("[" .. t .. "] " .. string.rep("-", math.max(2, 50 - #t)), "sec") end
+local Players = game:GetService("Players")
+local UIS     = game:GetService("UserInputService")
+local lp      = Players.LocalPlayer
 
-local function safe_call(fn, ...)
-    local a = { pcall(fn, ...) }
-    if not a[1] then return false, a[2] end
-    return true, select(2, table.unpack(a))
+local URL = "https://raw.githubusercontent.com/Kaspiersky/Scripting-Shit/refs/heads/main/UNCTestLoadstring"
+
+-- =====================================================
+-- parent
+-- =====================================================
+local function get_parent()
+    if type(gethui) == "function" then
+        local ok, h = pcall(gethui)
+        if ok and h then return h end
+    end
+    local ok, cg = pcall(function() return game:GetService("CoreGui") end)
+    if ok and cg then return cg end
+    return lp:WaitForChild("PlayerGui")
 end
 
-local function ret_type(v) return type(v) == "userdata" and typeof(v) or type(v) end
+local parent = get_parent()
+local OLD = parent:FindFirstChild("nyx_unctest_wrapper")
+if OLD then OLD:Destroy() end
 
 -- =====================================================
--- TESTS -- manifest
--- each: { group, name, run = function -> ok, witness }
+-- gui
 -- =====================================================
-local TESTS = {}
-local function T(group, name, run)
-    TESTS[#TESTS+1] = { group = group, name = name, run = run }
+local function u(class, props, kids)
+    local o = Instance.new(class)
+    for k, v in pairs(props or {}) do o[k] = v end
+    for _, c in ipairs(kids or {}) do c.Parent = o end
+    return o
+end
+local function corner(r) return u("UICorner", { CornerRadius = UDim.new(0, r or 8) }) end
+
+local gui = u("ScreenGui", {
+    Name = "nyx_unctest_wrapper",
+    ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    IgnoreGuiInset = true,
+    Parent = parent,
+})
+
+local frame = u("Frame", {
+    Parent = gui,
+    Size = UDim2.fromOffset(560, 480),
+    Position = UDim2.new(0.5, -280, 0.5, -240),
+    BackgroundColor3 = Color3.fromRGB(18, 18, 22),
+    BorderSizePixel = 0,
+}, { corner(10) })
+
+local titlebar = u("Frame", {
+    Parent = frame,
+    Size = UDim2.new(1, 0, 0, 34),
+    BackgroundColor3 = Color3.fromRGB(30, 30, 38),
+    BorderSizePixel = 0,
+}, { corner(10) })
+
+u("Frame", {
+    Parent = titlebar,
+    Size = UDim2.new(1, 0, 0, 10),
+    Position = UDim2.new(0, 0, 1, -10),
+    BackgroundColor3 = Color3.fromRGB(30, 30, 38),
+    BorderSizePixel = 0,
+    ZIndex = titlebar.ZIndex + 1,
+})
+
+u("TextLabel", {
+    Parent = titlebar,
+    Size = UDim2.new(1, -70, 1, 0),
+    Position = UDim2.new(0, 12, 0, 0),
+    BackgroundTransparency = 1,
+    Font = Enum.Font.GothamBold,
+    TextSize = 14,
+    TextColor3 = Color3.fromRGB(200, 120, 220),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Text = "nyx :: UNCTestLoadstring wrapper",
+})
+
+local close = u("TextButton", {
+    Parent = titlebar,
+    Size = UDim2.fromOffset(30, 22),
+    Position = UDim2.new(1, -38, 0.5, -11),
+    BackgroundColor3 = Color3.fromRGB(55, 30, 30),
+    BorderSizePixel = 0,
+    Font = Enum.Font.GothamBold,
+    TextSize = 13,
+    TextColor3 = Color3.fromRGB(230, 120, 120),
+    Text = "x",
+    AutoButtonColor = false,
+}, { corner(6) })
+close.MouseButton1Click:Connect(function() gui:Destroy() end)
+
+-- button row
+local btnrow = u("Frame", {
+    Parent = frame,
+    Size = UDim2.new(1, -16, 0, 34),
+    Position = UDim2.new(0, 8, 0, 42),
+    BackgroundTransparency = 1,
+})
+
+local function make_button(txt, accent)
+    local b = u("TextButton", {
+        Parent = btnrow,
+        Size = UDim2.new(0, 80, 1, 0),
+        BackgroundColor3 = Color3.fromRGB(45, 45, 55),
+        BorderSizePixel = 0,
+        Font = Enum.Font.GothamBold,
+        TextSize = 13,
+        TextColor3 = accent or Color3.fromRGB(220, 220, 230),
+        Text = txt,
+        AutoButtonColor = false,
+    }, { corner(6) })
+    b.MouseEnter:Connect(function() b.BackgroundColor3 = Color3.fromRGB(65, 65, 78) end)
+    b.MouseLeave:Connect(function() b.BackgroundColor3 = Color3.fromRGB(45, 45, 55) end)
+    return b
 end
 
--- ─── EXECUTION ───────────────────────────────────────
-T("execution", "loadstring returns function", function()
-    if type(loadstring) ~= "function" then return false, "missing" end
-    local f = loadstring("return 1+1")
-    local ok, r = safe_call(f)
-    return ok and r == 2, "r=" .. tostring(r)
-end)
+local b_run   = make_button("run",   Color3.fromRGB(140, 220, 140))
+local b_clear = make_button("clear", Color3.fromRGB(220, 140, 140))
+local b_copy  = make_button("copy",  Color3.fromRGB(200, 180, 120))
 
-T("execution", "loadstring preserves chunkname", function()
-    if type(loadstring) ~= "function" then return false, "missing" end
-    local f = loadstring("return 1", "=my_chunk")
-    if not f then return false, "load fail" end
-    local info = debug.getinfo and debug.getinfo(f)
-    if not info then return true, "no getinfo, assumption ok" end
-    return info.short_src and info.short_src:find("my_chunk", 1, true) ~= nil,
-        "src=" .. tostring(info.short_src)
-end)
+b_run.Position   = UDim2.new(0, 0,    0, 0)
+b_clear.Position = UDim2.new(0, 88,   0, 0)
+b_copy.Position  = UDim2.new(0, 176,  0, 0)
 
-T("execution", "loadstring with syntax error returns nil+err", function()
-    if type(loadstring) ~= "function" then return false, "missing" end
-    local f, e = loadstring("this is (bad lua")
-    return f == nil and type(e) == "string" and #e > 0, "f=" .. tostring(f) .. " e=" .. tostring(e)
-end)
+-- output
+local scroll = u("ScrollingFrame", {
+    Parent = frame,
+    Size = UDim2.new(1, -16, 1, -128),
+    Position = UDim2.new(0, 8, 0, 84),
+    BackgroundColor3 = Color3.fromRGB(12, 12, 16),
+    BorderSizePixel = 0,
+    ScrollBarThickness = 4,
+    ScrollBarImageColor3 = Color3.fromRGB(120, 120, 140),
+    CanvasSize = UDim2.new(0, 0, 0, 0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+}, { corner(6) })
 
--- ─── FILE SYSTEM ─────────────────────────────────────
-T("fs", "writefile + readfile round trip", function()
-    if type(writefile) ~= "function" or type(readfile) ~= "function" then
-        return false, "missing"
+u("UIPadding", {
+    Parent = scroll,
+    PaddingLeft   = UDim.new(0, 8),
+    PaddingRight  = UDim.new(0, 8),
+    PaddingTop    = UDim.new(0, 6),
+    PaddingBottom = UDim.new(0, 6),
+})
+
+local out = u("TextLabel", {
+    Parent = scroll,
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1, -8, 0, 0),
+    AutomaticSize = Enum.AutomaticSize.Y,
+    Font = Enum.Font.Code,
+    TextSize = 13,
+    TextWrapped = true,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    TextColor3 = Color3.fromRGB(200, 200, 200),
+    RichText = true,
+    Text = "",
+})
+
+local foot = u("TextLabel", {
+    Parent = frame,
+    Size = UDim2.new(1, -16, 0, 18),
+    Position = UDim2.new(0, 8, 1, -24),
+    BackgroundTransparency = 1,
+    Font = Enum.Font.Gotham,
+    TextSize = 12,
+    TextColor3 = Color3.fromRGB(120, 120, 140),
+    TextXAlignment = Enum.TextXAlignment.Left,
+    Text = "ready",
+})
+
+-- =====================================================
+-- log
+-- =====================================================
+local LINES, RAW = {}, {}
+
+local COLORS = {
+    pass   = "#78dc78",
+    fail   = "#ff5a5a",
+    warn   = "#e6c850",
+    info   = "#7aaaff",
+    dim    = "#888888",
+    plain  = "#c8c8c8",
+    accent = "#c878dc",
+}
+
+local function classify(text)
+    local s = tostring(text)
+    local low = s:lower()
+    if s:find("PASS") or low:find("^%s*pass")   then return "pass" end
+    if s:find("FAIL") or low:find("^%s*fail")   then return "fail" end
+    if low:find("warn") or s:find("%[warn%]")   then return "warn" end
+    if s:find("^%[")                            then return "info" end
+    return "plain"
+end
+
+local function emit(text)
+    local s = tostring(text)
+    for line in (s .. "\n"):gmatch("([^\n]*)\n") do
+        local tag = classify(line)
+        local c = COLORS[tag]
+        LINES[#LINES+1] = string.format('<font color="%s">%s</font>', c, line)
+        RAW[#RAW+1] = line
     end
-    local tok = "nyx_" .. tostring(math.random(1e12))
-    local path = "nyx_fs_" .. tostring(math.random(1e9)) .. ".txt"
-    local ok = pcall(function()
-        writefile(path, tok)
-        local got = readfile(path)
-        if got ~= tok then error("got " .. tostring(got)) end
-        delfile(path)
-    end)
-    return ok, path
-end)
-
-T("fs", "appendfile appends", function()
-    if type(writefile) ~= "function" or type(appendfile) ~= "function"
-        or type(readfile) ~= "function" then return false, "missing" end
-    local path = "nyx_ap_" .. tostring(math.random(1e9)) .. ".txt"
-    local ok = pcall(function()
-        writefile(path, "a")
-        appendfile(path, "b")
-        if readfile(path) ~= "ab" then error("append mismatch") end
-        delfile(path)
-    end)
-    return ok
-end)
-
-T("fs", "isfile reports false after delfile", function()
-    if type(writefile) ~= "function" or type(delfile) ~= "function"
-        or type(isfile) ~= "function" then return false, "missing" end
-    local path = "nyx_del_" .. tostring(math.random(1e9)) .. ".txt"
-    writefile(path, "x")
-    local before = isfile(path)
-    delfile(path)
-    local after = isfile(path)
-    return before == true and after == false, "before=" .. tostring(before) .. " after=" .. tostring(after)
-end)
-
-T("fs", "listfiles sees aritifacts from other scripts", function()
-    if type(writefile) ~= "function" or type(listfiles) ~= "function" then
-        return false, "missing"
+    if #LINES > 2000 then
+        local cut = #LINES - 2000
+        for _ = 1, cut do table.remove(LINES, 1); table.remove(RAW, 1) end
     end
-    local path = "nyx_list_" .. tostring(math.random(1e9)) .. ".txt"
-    writefile(path, "x")
-    local found = false
-    for _, e in ipairs(listfiles(".")) do
-        if e:find(path, 1, true) then found = true; break end
+    out.Text = table.concat(LINES, "\n")
+    task.defer(function() scroll.CanvasPosition = Vector2.new(0, math.huge) end)
+end
+
+local function clear_out()
+    LINES, RAW = {}, {}
+    out.Text = ""
+    foot.Text = "ready"
+end
+
+-- =====================================================
+-- hook + run
+-- =====================================================
+local busy = false
+
+local function run()
+    if busy then return end
+    busy = true
+    foot.Text = "running..."
+
+    emit("[nyx] begin -- fetch " .. URL)
+    emit("[nyx] " .. os.date("%Y-%m-%d %H:%M:%S"))
+    emit("")
+
+    -- snapshot originals
+    local real_print = print
+    local real_warn  = warn
+    local real_rcon  = nil
+    if type(rconsoleprint) == "function" then real_rcon = rconsoleprint end
+
+    -- indent helper to keep script output visually nested
+    local function wrap(s)
+        return s
     end
-    delfile(path)
-    return found
-end)
 
--- ─── HOOKFUNCTION ────────────────────────────────────
-T("hook", "hookfunction intercepts calls to target", function()
-    if type(hookfunction) ~= "function" or type(restorefunction) ~= "function" then
-        return false, "missing"
+    -- hook print
+    print = function(...)
+        local parts = {}
+        for i = 1, select("#", ...) do parts[i] = tostring(select(i, ...)) end
+        emit(wrap(table.concat(parts, "\t")))
+        pcall(real_print, ...)
     end
-    local hits = 0
-    local fn = function(a, b) return a + b end
-    local ok, old = safe_call(hookfunction, fn, function(a, b)
-        hits = hits + 1
-        return old(a, b) * 100
-    end)
-    if not ok then return false, "hook threw: " .. tostring(old) end
-    local r = fn(2, 3)
-    restorefunction(fn)
-    return r == 500 and hits == 1, "r=" .. tostring(r) .. " hits=" .. tostring(hits)
-end)
 
-T("hook", "hookfunction returns original that still works", function()
-    if type(hookfunction) ~= "function" or type(restorefunction) ~= "function" then
-        return false, "missing"
+    -- hook warn
+    warn = function(...)
+        local parts = {}
+        for i = 1, select("#", ...) do parts[i] = tostring(select(i, ...)) end
+        emit(wrap("[warn] " .. table.concat(parts, "\t")))
+        pcall(real_warn, ...)
     end
-    local fn = function(x) return x * 2 end
-    local ok, old = safe_call(hookfunction, fn, function(x) return old(x) end)
-    if not ok then return false, "hook threw" end
-    local direct = old(5)
-    restorefunction(fn)
-    return direct == 10, "old(5)=" .. tostring(direct)
-end)
 
-T("hook", "restorefunction fully reverses hook", function()
-    if type(hookfunction) ~= "function" or type(restorefunction) ~= "function" then
-        return false, "missing"
+    -- hook rconsole print if available
+    if real_rcon then
+        rconsoleprint = function(s)
+            emit(wrap(tostring(s):gsub("\n$", "")))
+            pcall(real_rcon, s)
+        end
     end
-    local fn = function() return 1 end
-    hookfunction(fn, function() return 2 end)
-    local during = fn()
-    restorefunction(fn)
-    local after = fn()
-    return during == 2 and after == 1, "during=" .. tostring(during) .. " after=" .. tostring(after)
-end)
 
--- ─── NEWCCLOSURE ─────────────────────────────────────
-T("closure", "newcclosure wraps but preserves return", function()
-    if type(newcclosure) ~= "function" then return false, "missing" end
-    local c = newcclosure(function(x) return x + 1 end)
-    return c(41) == 42
-end)
-
-T("closure", "newcclosure passes iscclosure test", function()
-    if type(newcclosure) ~= "function" or type(iscclosure) ~= "function" then
-        return false, "missing"
-    end
-    local c = newcclosure(function() end)
-    return iscclosure(c) == true
-end)
-
-T("closure", "checkcaller true inside newcclosure", function()
-    if type(newcclosure) ~= "function" or type(checkcaller) ~= "function" then
-        return false, "missing"
-    end
-    local got
-    local c = newcclosure(function() got = checkcaller() end)
-    c()
-    return got == true
-end)
-
--- ─── GETRAWMETATABLE ─────────────────────────────────
-T("meta", "getrawmetatable returns writable table", function()
-    if type(getrawmetatable) ~= "function" or type(setreadonly) ~= "function"
-        or type(isreadonly) ~= "function" then return false, "missing" end
-    local mt = getrawmetatable(game)
-    if type(mt) ~= "table" then return false, "not table" end
-    local was = isreadonly(mt)
-    setreadonly(mt, false)
-    local now = isreadonly(mt)
-    setreadonly(mt, was)
-    return now == false, "isreadonly after unprotect=" .. tostring(now)
-end)
-
-T("meta", "hookmetamethod ____namecall intercepts", function()
-    if type(hookmetamethod) ~= "function" or type(getrawmetatable) ~= "function" then
-        return false, "missing"
-    end
-    local hits = 0
-    local ok = pcall(function()
-        local mt = getrawmetatable(game)
-        local old = mt.__namecall
-        local prev = hookmetamethod(game, "__namecall", function(self, ...)
-            hits = hits + 1
-            return old(self, ...)
+    local ok_all = pcall(function()
+        -- 1. fetch
+        local ok_src, src = pcall(function()
+            return game:HttpGet(URL)
         end)
-        game:GetService("RunService")
-        if type(restorefunction) == "function" then
-            restorefunction(prev or mt.__namecall)
+        if not ok_src or type(src) ~= "string" or #src == 0 then
+            emit("[nyx] fetch failed: " .. tostring(src), "fail")
+            return
         end
-    end)
-    return ok and hits > 0, "hits=" .. tostring(hits)
-end)
+        emit(string.format("[nyx] fetched %d bytes", #src))
 
--- ─── GETCONNECTIONS ──────────────────────────────────
-T("signal", "getconnections sees new connection", function()
-    if type(getconnections) ~= "function" then return false, "missing" end
-    local sig = game:GetService("RunService").Heartbeat
-    local before = #getconnections(sig)
-    local conn = sig:Connect(function() end)
-    task.wait(0.05)
-    local after = #getconnections(sig)
-    conn:Disconnect()
-    return after == before + 1, before .. " -> " .. after
-end)
-
-T("signal", "getconnections entries have Function/Enabled/Disconnect", function()
-    if type(getconnections) ~= "function" then return false, "missing" end
-    local sig = game:GetService("RunService").Heartbeat
-    local conn = sig:Connect(function() end)
-    local entries = getconnections(sig)
-    conn:Disconnect()
-    if #entries == 0 then return false, "empty" end
-    for _, c in ipairs(entries) do
-        if c.Function == nil or c.Enabled == nil or type(c.Disconnect) ~= "function" then
-            return false, "entry missing fields"
+        -- 2. compile
+        local fn, cerr = loadstring(src)
+        if not fn then
+            emit("[nyx] compile failed: " .. tostring(cerr), "fail")
+            return
         end
-    end
-    return true
-end)
+        emit("[nyx] compiled -- running")
+        emit("")
 
-T("signal", "getconnections Disconnect affects count", function()
-    if type(getconnections) ~= "function" then return false, "missing" end
-    local sig = game:GetService("RunService").Heartbeat
-    local conn = sig:Connect(function() end)
-    task.wait(0.05)
-    local entries = getconnections(sig)
-    local target
-    for _, c in ipairs(entries) do
-        if c.Function ~= nil then target = c; break end
-    end
-    if not target then conn:Disconnect(); return false, "no entries" end
-    local n_before = #getconnections(sig)
-    pcall(target.Disconnect)
-    task.wait(0.05)
-    local n_after = #getconnections(sig)
-    pcall(function() conn:Disconnect() end)
-    return n_after <= n_before, n_before .. " -> " .. n_after
-end)
-
--- ─── FIRESIGNAL ──────────────────────────────────────
-T("fire", "firesignal triggers connected listener", function()
-    if type(firesignal) ~= "function" then return false, "missing" end
-    local fired = false
-    local sig = Instance.new("BindableEvent")
-    local conn = sig.Event:Connect(function(v) if v == "nyx" then fired = true end end)
-    local ok = pcall(firesignal, sig.Event, "nyx")
-    conn:Disconnect()
-    sig:Destroy()
-    return ok and fired, "ok=" .. tostring(ok) .. " fired=" .. tostring(fired)
-end)
-
-T("fire", "fireclickdetector reaches MouseClick", function()
-    if type(fireclickdetector) ~= "function" then return false, "missing" end
-    local part = Instance.new("Part"); part.Anchored = true; part.Parent = workspace
-    local cd = Instance.new("ClickDetector"); cd.Parent = part
-    local fired = false
-    local conn = cd.MouseClick:Connect(function() fired = true end)
-    local ok = pcall(fireclickdetector, cd)
-    conn:Disconnect(); cd:Destroy(); part:Destroy()
-    return ok and fired
-end)
-
--- ─── GETGENV / GETRENV ───────────────────────────────
-T("env", "getgenv returns same table each call", function()
-    if type(getgenv) ~= "function" then return false, "missing" end
-    return getgenv() == getgenv()
-end)
-
-T("env", "getgenv != getrenv", function()
-    if type(getgenv) ~= "function" or type(getrenv) ~= "function" then
-        return false, "missing"
-    end
-    return getgenv() ~= getrenv()
-end)
-
-T("env", "genv survives across loadstring chunks", function()
-    if type(getgenv) ~= "function" or type(loadstring) ~= "function" then
-        return false, "missing"
-    end
-    local f = loadstring([[
-        getgenv().__unc_c = (getgenv().__unc_c or 0) + 1
-        return getgenv().__unc_c
-    ]])
-    local a, b = f(), f()
-    getgenv().__unc_c = nil
-    return a == 1 and b == 2, "a=" .. tostring(a) .. " b=" .. tostring(b)
-end)
-
--- ─── IDENTITY ────────────────────────────────────────
-T("identity", "getthreadidentity returns number", function()
-    if type(getthreadidentity) ~= "function" then return false, "missing" end
-    return type(getthreadidentity()) == "number"
-end)
-
-T("identity", "setthreadidentity(2) sticks", function()
-    if type(setthreadidentity) ~= "function" or type(getthreadidentity) ~= "function" then
-        return false, "missing"
-    end
-    local orig = getthreadidentity()
-    setthreadidentity(2)
-    local at2 = getthreadidentity()
-    setthreadidentity(orig)
-    return at2 == 2, "at2=" .. tostring(at2)
-end)
-
--- ─── CLONEREF ────────────────────────────────────────
-T("ref", "cloneref returns distinct userdata", function()
-    if type(cloneref) ~= "function" then return false, "missing" end
-    local p = Instance.new("Part")
-    local ok, c = safe_call(cloneref, p)
-    p:Destroy()
-    return ok and type(c) == "userdata" and c ~= p
-end)
-
-T("ref", "compareinstances(cloneref(x), x) == true", function()
-    if type(cloneref) ~= "function" or type(compareinstances) ~= "function" then
-        return false, "missing"
-    end
-    local p = Instance.new("Part")
-    local ok, r = safe_call(compareinstances, cloneref(p), p)
-    p:Destroy()
-    return ok and r == true
-end)
-
--- ─── CACHE ───────────────────────────────────────────
-T("cache", "cache.iscached returns boolean", function()
-    if type(cache) ~= "table" or type(cache.iscached) ~= "function" then
-        return false, "missing"
-    end
-    local p = Instance.new("Part")
-    local r = cache.iscached(p)
-    p:Destroy()
-    return type(r) == "boolean"
-end)
-
-T("cache", "cache.invalidate runs without error", function()
-    if type(cache) ~= "table" or type(cache.invalidate) ~= "function" then
-        return false, "missing"
-    end
-    local p = Instance.new("Part")
-    local ok, err = safe_call(cache.invalidate, p)
-    p:Destroy()
-    return ok, tostring(err)
-end)
-
--- ─── CRYPT ───────────────────────────────────────────
-T("crypt", "base64 round-trip preserves bytes", function()
-    if type(crypt) ~= "table" or type(crypt.base64encode) ~= "function"
-        or type(crypt.base64decode) ~= "function" then return false, "missing" end
-    local tok = "nyx_" .. tostring(math.random(1e12))
-    local e = crypt.base64encode(tok)
-    local d = crypt.base64decode(e)
-    return d == tok, "e=" .. tostring(e) .. " d=" .. tostring(d)
-end)
-
-T("crypt", "hash is deterministic", function()
-    if type(crypt) ~= "table" or type(crypt.hash) ~= "function" then
-        return false, "missing"
-    end
-    local ok1, h1 = safe_call(crypt.hash, "sha256", "abc")
-    if not ok1 then ok1, h1 = safe_call(crypt.hash, "abc") end
-    local ok2, h2 = safe_call(crypt.hash, "sha256", "abc")
-    if not ok2 then ok2, h2 = safe_call(crypt.hash, "abc") end
-    return ok1 and ok2 and h1 == h2 and type(h1) == "string" and #h1 > 0
-end)
-
-T("crypt", "random(16) differs each call", function()
-    if type(crypt) ~= "table" or type(crypt.random) ~= "function" then
-        return false, "missing"
-    end
-    local a = crypt.random(16)
-    local b = crypt.random(16)
-    return a ~= b and type(a) == "string" and #a > 0
-end)
-
--- ─── REQUEST ─────────────────────────────────────────
-T("network", "request exists and returns table", function()
-    local fn
-    if type(request) == "function" then fn = request
-    elseif type(http_request) == "function" then fn = http_request
-    elseif type(getgenv) == "function" and getgenv().syn
-        and type(getgenv().syn.request) == "function" then fn = getgenv().syn.request
-    end
-    if not fn then return false, "no request/http/syn.request" end
-    local ok, resp = safe_call(fn, {
-        Url = "https://httpbin.org/user-agent",
-        Method = "GET",
-        Headers = { ["User-Agent"] = "nyx" },
-    })
-    if not ok then return false, "err: " .. tostring(resp) end
-    if type(resp) ~= "table" then return false, "resp=" .. type(resp) end
-    local body = resp.Body or resp.body
-    return type(body) == "string" and #body > 0, "#body=" .. tostring(body and #body or 0)
-end)
-
--- ─── INSTANCES ───────────────────────────────────────
-T("instances", "getinstances includes game and workspace", function()
-    if type(getinstances) ~= "function" then return false, "missing" end
-    local list = getinstances()
-    local has_g, has_w = false, false
-    for _, i in ipairs(list) do
-        if i == game then has_g = true end
-        if i == workspace then has_w = true end
-        if has_g and has_w then break end
-    end
-    return has_g and has_w, "g=" .. tostring(has_g) .. " w=" .. tostring(has_w)
-end)
-
-T("instances", "getnilinstances returns only parentless", function()
-    if type(getnilinstances) ~= "function" then return false, "missing" end
-    local list = getnilinstances()
-    local leaked = 0
-    for _, i in ipairs(list) do
-        if i.Parent ~= nil then leaked = leaked + 1 end
-    end
-    return leaked == 0, "leaked=" .. tostring(leaked)
-end)
-
--- ─── IDENTIFY ────────────────────────────────────────
-T("identify", "identifyexecutor stable across calls", function()
-    if type(identifyexecutor) ~= "function" then return false, "missing" end
-    local a, b = identifyexecutor(), identifyexecutor()
-    return a == b and type(a) == "string" and #a > 0
-end)
-
--- =====================================================
--- runner
--- =====================================================
-local RESULTS = {}
-
-local function run_all()
-    OUT = { lines = {}, pass = 0, fail = 0, skip = 0 }
-    RESULTS = {}
-
-    emit("nyx :: UNC + sUNC evidence-based suite")
-    emit("executor : " .. tostring((function()
-        local ok, n = pcall(identifyexecutor); return ok and n or "unknown"
-    end)()))
-    emit("time     : " .. os.date("%Y-%m-%d %H:%M:%S"))
-    emit("")
-
-    local cur_group = nil
-    for _, t in ipairs(TESTS) do
-        if t.group ~= cur_group then
-            cur_group = t.group
-            head(cur_group)
-        end
-
-        local ok, witness = safe_call(t.run)
-        if ok and type(witness) ~= "boolean" then
-            -- run returned (true_or_false, witness)
-            local passed = witness
-            local w = select(2, safe_call(t.run))
-            -- rerun -- not ideal, but functions should be pure enough
-            local _, w2 = safe_call(t.run)
-            emit(string.format("  %-4s %s", "?", t.name), nil)
+        -- 3. run
+        local ok_run, rerr = pcall(fn)
+        if not ok_run then
+            emit("")
+            emit("[nyx] runtime error: " .. tostring(rerr), "fail")
         else
-            -- ok is pcall result, witness is first return of t.run
-            local passed = witness
-            local _, w = safe_call(t.run)
-            if passed == nil then passed = false end
-            if passed then
-                OUT.pass = OUT.pass + 1
-                emit("  PASS  " .. t.name .. (w and ("   -- " .. tostring(w)) or ""), "pass")
-                RESULTS[#RESULTS+1] = { group = t.group, name = t.name, ok = true, witness = w }
-            else
-                OUT.fail = OUT.fail + 1
-                emit("  FAIL  " .. t.name .. (w and ("   -- " .. tostring(w)) or ""), "fail")
-                RESULTS[#RESULTS+1] = { group = t.group, name = t.name, ok = false, witness = w }
-            end
+            emit("")
+            emit("[nyx] done")
         end
+    end)
+
+    -- restore
+    print = real_print
+    warn = real_warn
+    if real_rcon then rconsoleprint = real_rcon end
+
+    if not ok_all then
+        emit("[nyx] wrapper error (should not happen)", "fail")
     end
 
-    emit("")
-    emit(string.rep("=", 50))
-    emit(string.format("PASS %d   FAIL %d   SKIP %d   TOTAL %d",
-        OUT.pass, OUT.fail, OUT.skip, OUT.pass + OUT.fail + OUT.skip))
-    emit(string.rep("=", 50))
+    busy = false
+    foot.Text = "finished -- " .. os.date("%H:%M:%S")
 end
 
--- =====================================================
--- reporter
--- =====================================================
-local function report_to(textual)
-    for _, l in ipairs(OUT.lines) do
-        textual(l.text, l.tag)
+b_run.MouseButton1Click:Connect(function()
+    clear_out()
+    task.spawn(run)
+end)
+
+b_clear.MouseButton1Click:Connect(function()
+    clear_out()
+end)
+
+b_copy.MouseButton1Click:Connect(function()
+    if type(setclipboard) ~= "function" then
+        foot.Text = "setclipboard unavailable"
+        return
     end
-end
+    local ok = pcall(setclipboard, table.concat(RAW, "\n"))
+    foot.Text = ok and ("copied " .. #RAW .. " lines") or "copy failed"
+end)
 
-local function report_console()
-    report_to(function(s) print(s) end)
-end
-
-local function report_rconsole()
-    if type(rconsolecreate) ~= "function" then return end
-    pcall(function()
-        rconsolecreate()
-        if type(rconsolename) == "function" then rconsolename("nyx :: UNC+sUNC") end
-        if type(rconsoleclear) == "function" then rconsoleclear() end
-        for _, l in ipairs(OUT.lines) do
-            if type(rconsoleprint) == "function" then rconsoleprint(l.text .. "\n") end
+-- =====================================================
+-- drag
+-- =====================================================
+do
+    local dragging, dragInput, dragStart, startPos
+    titlebar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    titlebar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+    UIS.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local d = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y)
         end
     end)
 end
 
-local function report_file()
-    if type(writefile) ~= "function" then return end
-    local buf = {}
-    for _, l in ipairs(OUT.lines) do buf[#buf+1] = l.text end
-    pcall(function()
-        writefile("nyx_unc_sunc_results.txt", table.concat(buf, "\n"))
-    end)
-end
-
-local function report_json()
-    return {
-        executor   = (function() local ok, n = pcall(identifyexecutor); return ok and n or "unknown" end)(),
-        timestamp  = os.time(),
-        summary    = { pass = OUT.pass, fail = OUT.fail, skip = OUT.skip },
-        results    = RESULTS,
-    }
-end
-
 -- =====================================================
--- public API
+-- boot
 -- =====================================================
-local API = {}
-
-function API.run()
-    run_all()
-    report_console()
-    report_rconsole()
-    report_file()
-    return report_json()
-end
-
-function API.run_unc()
-    -- only goes UNC-listed groups (presence-ish + basic)
-    run_all()
-    report_console()
-    return report_json()
-end
-
-function API.run_sunc()
-    -- behavior groups only
-    run_all()
-    report_console()
-    return report_json()
-end
-
-function API.report() return report_json() end
-function API.lines() return OUT.lines end
-function API.results() return RESULTS end
-
--- auto-run on load
-return API.run()
+emit("[nyx] wrapper ready")
+emit("[nyx] source: Kaspiersky/UNCTestLoadstring")
+emit("[nyx] click [run] to fetch + execute")
+foot.Text = "ready -- click run"
